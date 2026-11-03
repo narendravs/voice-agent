@@ -37,7 +37,7 @@ else:
     LANGGRAPH_API_ENDPOINT = os.getenv("NEXT_PUBLIC_PROD_LANGGRAPH_AGENT_ENDPOINT", DEFAULT_PROD_URL)
     logger.info(f"LangGraph Agent configured for PRODUCTION environment: {LANGGRAPH_API_ENDPOINT}")
 
-
+class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
             # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
