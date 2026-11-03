@@ -1,6 +1,7 @@
 import logging
 import textwrap
 import aiohttp
+import os
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -22,8 +23,21 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Dynamic Environment Router for LangGraph API Endpoint
+# Set LANGGRAPH_ENV="production" or "local" in your environment or .env file
+ENV_MODE = os.getenv("LANGGRAPH_ENV", os.getenv("NEXT_PUBLIC_LANGGRAPH_ENV", "production")).lower()
 
-class Assistant(Agent):
+DEFAULT_PROD_URL = "https://healthcare-eight-mu.vercel.app/api/aiagents/voiceAgent"
+DEFAULT_LOCAL_URL = "http://localhost:3000/api/aiagents/voiceAgent"
+
+if ENV_MODE == "local":
+    LANGGRAPH_API_ENDPOINT = os.getenv("NEXT_PUBLIC_LOCAL_LANGGRAPH_AGENT_ENDPOINT", DEFAULT_LOCAL_URL)
+    logger.info(f"LangGraph Agent configured for LOCAL environment: {LANGGRAPH_API_ENDPOINT}")
+else:
+    LANGGRAPH_API_ENDPOINT = os.getenv("NEXT_PUBLIC_PROD_LANGGRAPH_AGENT_ENDPOINT", DEFAULT_PROD_URL)
+    logger.info(f"LangGraph Agent configured for PRODUCTION environment: {LANGGRAPH_API_ENDPOINT}")
+
+
     def __init__(self) -> None:
         super().__init__(
             # A Large Language Model (LLM) is your agent's brain, processing user input and generating a response
@@ -68,7 +82,7 @@ class Assistant(Agent):
             try:
                 # Call your Next.js API route that queries the DB for doctors
                 async with session.post(
-                    "http://localhost:3000/api/aiagents/voiceAgent",
+                    LANGGRAPH_API_ENDPOINT,
                     json={"query": "Get me the list of available doctors", "sessionId": session_id}
                 ) as response:
                     if response.status == 200:
@@ -111,7 +125,7 @@ class Assistant(Agent):
         async with aiohttp.ClientSession() as session:
             try:
                 # Update with your production URL when deployed
-                api_url = "http://localhost:3000/api/aiagents/voiceAgent"
+                api_url = LANGGRAPH_API_ENDPOINT
                 
                 async with session.post(
                     api_url,
