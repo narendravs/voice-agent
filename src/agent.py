@@ -226,6 +226,10 @@ async def voice_agent(ctx: JobContext):
     # Join the room and connect to the user
     await ctx.connect()
 
+    # Trigger automatic greeting upon session start
+    await session.generate_reply(
+        text="Welcome to Care Pulse! How can I help you today?"
+    )
 
 if __name__ == "__main__":
     cli.run_app(server)
