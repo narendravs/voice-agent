@@ -222,14 +222,18 @@ async def voice_agent(ctx: JobContext):
     # )
     # # Start the avatar and wait for it to join
     # await avatar.start(session, room=ctx.room)
-
+    
+    await session.start(agent=Assistant(), room=ctx.room)
+    
     # Join the room and connect to the user
     await ctx.connect()
 
-    # Trigger automatic greeting upon session start
-    await session.generate_reply(
-        text="Welcome to Care Pulse! How can I help you today?"
-    )
+    # FIX: generate_reply() has no `text=` argument, which raised a TypeError and
+    # ended the job. Use say() for an exact line.
+    try:
+        await session.say("Welcome to Care Pulse! How can I help you today?")
+    except Exception:
+        logger.exception("Greeting failed")
 
 if __name__ == "__main__":
     cli.run_app(server)
