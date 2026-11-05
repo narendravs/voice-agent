@@ -37,6 +37,8 @@ else:
     LANGGRAPH_API_ENDPOINT = os.getenv("NEXT_PUBLIC_PROD_LANGGRAPH_AGENT_ENDPOINT", DEFAULT_PROD_URL)
     logger.info(f"LangGraph Agent configured for PRODUCTION environment: {LANGGRAPH_API_ENDPOINT}")
 
+# Define a timeout for your backend calls (e.g., 30 seconds)
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 def _session_id() -> str:
     """Use the LiveKit room name as a unique session id per call."""
