@@ -37,6 +37,63 @@ else:
     LANGGRAPH_API_ENDPOINT = os.getenv("NEXT_PUBLIC_PROD_LANGGRAPH_AGENT_ENDPOINT", DEFAULT_PROD_URL)
     logger.info(f"LangGraph Agent configured for PRODUCTION environment: {LANGGRAPH_API_ENDPOINT}")
 
+
+def _session_id() -> str:
+    """Use the LiveKit room name as a unique session id per call."""
+    try:
+        return get_job_context().room.name
+    except Exception:
+        return "voice-session-default"
+
+async def call_backend(query: str) -> tuple[bool, str]:
+    """POST a natural-language query to the backend.
+
+    Returns (ok, text). Every request and response is logged so you can see
+    exactly what the backend said. Failures are returned as ok=False instead of
+    being replaced with made-up fallback text.
+    """
+    payload = {"query": query, "sessionId": _session_id(), "language": "en"}
+    logger.info(f"[backend] POST {LANGGRAPH_API_ENDPOINT} payload={payload}")
+
+    try:
+        async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as http:
+            async with http.post(
+                LANGGRAPH_API_ENDPOINT,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                raw = await resp.text()
+                logger.info(f"[backend] status={resp.status} body={raw[:500]}")
+
+                if resp.status != 200:
+                    return False, f"The scheduling system returned HTTP {resp.status}."
+
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    # Plain-text or streamed response
+                    return True, raw.strip()
+
+                if isinstance(data, dict):
+                    for key in ("output", "response", "message", "reply", "answer", "text"):
+                        val = data.get(key)
+                        if isinstance(val, str) and val.strip():
+                            return True, val.strip()
+                    if data.get("error"):
+                        return False, str(data["error"])
+
+                return True, json.dumps(data)[:1000]
+    except Exception as e:
+        logger.exception(f"[backend] request failed: {e}")
+        return False, "Could not reach the scheduling system."
+
+
+def _failure(message: str) -> str:
+    return (
+        f"ERROR: {message} Tell the user briefly that you couldn't complete this right now "
+        "and offer to try again. Do NOT invent doctors and do NOT say an appointment was booked."
+    )
+
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
@@ -86,30 +143,22 @@ class Assistant(Agent):
             ),
         )
 
+        
     # ==========================================
     # VALIDATION TOOL: Get Available Doctors
     # ==========================================
     @function_tool
     async def get_available_doctors(self, context: RunContext):
-        """Use this tool to fetch the list of available doctors from the database when the user asks who they can see.
-        """
-        logger.info("Fetching available doctors from backend...")
-        session_id = context.room.name if hasattr(context, "room") else "voice-session-default"
+        """Fetch the real list of available doctors from the hospital database.
 
-        async with aiohttp.ClientSession() as session:
-            try:
-                # Call your Next.js API route that queries the DB for doctors
-                async with session.post(
-                    LANGGRAPH_API_ENDPOINT,
-                    json={"query": "Get me the list of available doctors", "sessionId": session_id}
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data.get("output", "Dr. Smith and Dr. Jones are available.")
-            except Exception as e:
-                logger.error(f"Failed to fetch doctors: {e}")
-                
-        return "We have general practitioners available."
+        Call this whenever the user asks who the doctors are, who is available,
+        which doctor they can see, or before confirming a doctor name for booking.
+        """
+        logger.info("[tool] get_available_doctors called")
+        ok, text = await call_backend("List all available doctors with their names and specialties.")
+        if not ok:
+            return _failure(text)
+        return text
 
     # ==========================================
     # APPOINTMENT SCHEDULING TOOL (Triggered at the end)
@@ -123,15 +172,18 @@ class Assistant(Agent):
         appointment_time: str, 
         reason: str,
         additional_info: str = "",
-    ):
-        """Use this tool to schedule an appointment ONLY AFTER you have collected the patient name, doctor name, appointment time, and reason from the user.
+    ) -> str:
+        """Schedule a medical appointment for a patient ONLY AFTER you have collected their full name, the doctor's name, the appointment date/time, and the reason for the visit.
 
         Args:
             patient_name: The full name of the patient.
             doctor_name: Doctor's name exactly as returned by get_available_doctors.
             appointment_time: Date and time in the format YYYY-MM-DD HH:MM (24-hour).
             reason: The reason or medical symptoms for the visit.
-            additional_info: Optional extra details the system asked for, such as phone or email.
+            additional_info: Optional extra details requested by the system, such as phone or email.
+
+        Returns:
+            A confirmation string stating whether the appointment was successfully booked.
         """
         logger.info(
             f"[tool] schedule_appointment called: {patient_name} / {doctor_name} / {appointment_time} / {reason}"
