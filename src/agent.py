@@ -57,12 +57,18 @@ async def call_backend(query: str) -> tuple[bool, str]:
     payload = {"query": query, "sessionId": _session_id(), "language": "en"}
     logger.info(f"[backend] POST {LANGGRAPH_API_ENDPOINT} payload={payload}")
 
+    # Optional: include Vercel protection bypass header if configured
+    headers = {"Content-Type": "application/json"}
+    vercel_bypass = os.getenv("VERCEL_PROTECTION_BYPASS_SECRET")
+    if vercel_bypass:
+        headers["x-vercel-protection-bypass"] = vercel_bypass
+
     try:
         async with aiohttp.ClientSession(timeout=HTTP_TIMEOUT) as http:
             async with http.post(
                 LANGGRAPH_API_ENDPOINT,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             ) as resp:
                 raw = await resp.text()
                 logger.info(f"[backend] status={resp.status} body={raw[:500]}")
@@ -200,30 +206,11 @@ class Assistant(Agent):
         if additional_info:
             query += f" Additional details: {additional_info}."
         
-        async with aiohttp.ClientSession() as session:
-            try:
-                # Update with your production URL when deployed
-                api_url = LANGGRAPH_API_ENDPOINT
-                
-                async with session.post(
-                    api_url,
-                    json={
-                        "query": query,
-                        "sessionId": session_id,
-                        "language": "en"
-                    },
-                    headers={"Content-Type": "application/json"}
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return data.get("output", "Appointment booked successfully.")
-                    else:
-                        error_resp = await response.text()
-                        logger.error(f"Next.js API error {response.status}: {error_resp}")
-                        return "I reached the scheduling system, but encountered an error saving the appointment."
-            except Exception as e:
-                logger.error(f"Failed to connect to Next.js agent endpoint: {e}")
-                return "Sorry, I am unable to connect to the scheduling service right now."
+        ok, text = await call_backend(query)
+        if not ok:
+            return _failure(text)
+        return text
+        
                 
 server = AgentServer()
 
