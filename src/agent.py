@@ -51,19 +51,37 @@ class Assistant(Agent):
             #    llm="openai/gpt-live-1",
             instructions=textwrap.dedent(
                 """\
-                You are a helpful and friendly medical assistant voice agent.
-                
-                # Conversational Rules
-                - Keep your replies brief: one to three sentences. Ask one question at a time.
-                - When the session starts, greet the user warmly and ask how you can help them today.
-                - If the user asks who the available doctors are, you MUST invoke the `get_available_doctors` tool to fetch the real-time list from the system.
-                - If the user wants to schedule an appointment, collect the required details **strictly one by one**:
-                  1. First, ask for the patient's full name.
-                  2. Once received, ask which doctor they want to see.
-                  3. Once received, ask for the preferred date and time.
-                  4. Finally, ask for the reason for the visit or symptoms.
-                - Do NOT call the scheduling tool until you have collected ALL four pieces of information.
-                - Once all details are collected, call the `schedule_appointment` tool and summarize the result to the user.
+                You are the voice assistant for CarePulse, a hospital appointment service.
+                Today is {today}.
+
+                # Style
+                - Replies are 1 to 3 short spoken sentences. Ask ONE question at a time.
+                - No lists, markdown or emojis. This is a phone call.
+                - The greeting has already been spoken. Do not greet again.
+
+                # Tools (you MUST use them)
+                - You have NO knowledge of which doctors exist. Never name or guess a doctor yourself.
+                - If the user asks about doctors, who is available, or who they can see, IMMEDIATELY call `get_available_doctors`.
+                  Do not answer from memory and do not say you will check without actually calling it.
+                  Then read out the doctor names from the tool result.
+                - Use doctor names exactly as returned by `get_available_doctors`.
+                - If a tool result starts with "ERROR", apologize briefly, say you could not complete it, and offer to retry.
+
+                # Booking an appointment
+                Collect these four details, one at a time, in this order:
+                  1. The patient's full name.
+                  2. Which doctor they want to see.
+                  3. Preferred date and time.
+                  4. Reason for the visit or symptoms.
+                - If the user already gave a detail, do not ask for it again.
+                - If they pick a doctor and you have not fetched the list yet, call `get_available_doctors` first to verify the name.
+                - As soon as you have all four, call `schedule_appointment` right away. Do not ask for extra confirmation.
+                - Convert the date and time to the format YYYY-MM-DD HH:MM (24-hour, {TIMEZONE.key}) using today's date above.
+                  Example: "tomorrow at 3 pm" becomes the next day's date followed by 15:00.
+                - After the tool returns, tell the user the outcome in one or two sentences.
+                - If the tool result asks for more information (for example phone number or email),
+                  ask the user for it, then call `schedule_appointment` again with the same details
+                  and put the new information in `additional_info`.
                 """
             ),
         )
@@ -103,25 +121,31 @@ class Assistant(Agent):
         patient_name: str, 
         doctor_name: str, 
         appointment_time: str, 
-        reason: str
+        reason: str,
+        additional_info: str = "",
     ):
         """Use this tool to schedule an appointment ONLY AFTER you have collected the patient name, doctor name, appointment time, and reason from the user.
 
         Args:
             patient_name: The full name of the patient.
-            doctor_name: The name of the doctor.
-            appointment_time: The requested date and time for the appointment.
+            doctor_name: Doctor's name exactly as returned by get_available_doctors.
+            appointment_time: Date and time in the format YYYY-MM-DD HH:MM (24-hour).
             reason: The reason or medical symptoms for the visit.
+            additional_info: Optional extra details the system asked for, such as phone or email.
         """
-        logger.info(f"Triggering appointment scheduling for {patient_name} with {doctor_name}")
+        logger.info(
+            f"[tool] schedule_appointment called: {patient_name} / {doctor_name} / {appointment_time} / {reason}"
+        )
 
         session_id = context.room.name if hasattr(context, "room") else "voice-session-default"
         
-        query_text = (
-            f"Schedule an appointment for patient {patient_name} "
-            f"with doctor {doctor_name} at {appointment_time} for reason: {reason}"
+        query = (
+            f"Schedule an appointment for patient {patient_name} with doctor {doctor_name} "
+            f"on {appointment_time} for reason: {reason}."
         )
-
+        if additional_info:
+            query += f" Additional details: {additional_info}."
+        
         async with aiohttp.ClientSession() as session:
             try:
                 # Update with your production URL when deployed
@@ -130,7 +154,7 @@ class Assistant(Agent):
                 async with session.post(
                     api_url,
                     json={
-                        "query": query_text,
+                        "query": query,
                         "sessionId": session_id,
                         "language": "en"
                     },
@@ -222,8 +246,6 @@ async def voice_agent(ctx: JobContext):
     # )
     # # Start the avatar and wait for it to join
     # await avatar.start(session, room=ctx.room)
-    
-    await session.start(agent=Assistant(), room=ctx.room)
     
     # Join the room and connect to the user
     await ctx.connect()
