@@ -1,161 +1,228 @@
-<a href="https://livekit.io/">
-  <img src="./.github/assets/livekit-mark.png" alt="LiveKit logo" width="100" height="100">
-</a>
+# CarePulse LiveKit Voice Agent
 
-# LiveKit Agents starter for Python
+A real-time, bi-directional conversational AI voice agent built on **LiveKit (WebRTC)**, **OpenAI (`gpt-4o-mini`)**, **AssemblyAI STT**, and **Fish Audio TTS**, integrated with a **Next.js LangGraph** backend API. This service handles live phone/WebRTC medical appointment scheduling, queries real-time doctor availability, and manages structured patient booking workflows.
 
-A starter project for building voice AI apps with [LiveKit Agents for Python](https://github.com/livekit/agents) and [LiveKit Cloud](https://cloud.livekit.io/).
+> [!WARNING]
+> **Security Note:** Ensure `.env.local` is added to `.gitignore` and never committed to version control. Rotate any exposed API keys immediately if they were pasted publicly.
 
-The starter includes:
+---
 
-- A simple [voice AI assistant](https://docs.livekit.io/agents/start/voice-ai/) to extend and customize.
-- A voice pipeline built on [LiveKit Inference](https://docs.livekit.io/agents/models/inference/), which gives you access to [models](https://docs.livekit.io/agents/models/) from top labs with no extra configuration:
-  - The default LLM is Gemma 4 31B, an open-weight model [hosted by LiveKit](https://docs.livekit.io/agents/models/llm/livekit/) and tuned for voice AI.
-  - The default TTS is [Fish Audio S2.1 Pro](https://docs.livekit.io/agents/models/tts/fishaudio/), an expressive and cost-effective voice.
-  - More than 50 other models are available from OpenAI, Cartesia, Deepgram, and other providers.
-  - [Realtime models](https://docs.livekit.io/agents/models/realtime/) such as OpenAI GPT-Live. Many other models are available through the [plugin ecosystem](https://docs.livekit.io/agents/models/#plugins).
-- [Expressive mode](https://docs.livekit.io/agents/models/tts/expressive/), on by default, so your agent's voice carries emotion and pacing that fit the conversation.
-- [Keyterms](https://docs.livekit.io/agents/models/stt/keyterms/), on by default, so speech recognition gets your names, brands, and jargon right, including names it picks up during the conversation, like a caller's.
-- [LiveKit Turn Detector](https://docs.livekit.io/agents/logic/turns/turn-detector/), which knows when the user has finished speaking, in 14 languages.
-- [Adaptive interruption handling](https://docs.livekit.io/agents/logic/turns/adaptive-interruption-handling/), which tells a real interruption from an "uh-huh" or background noise, so your agent doesn't stop talking when it shouldn't.
-- [Background voice cancellation](https://docs.livekit.io/transport/media/noise-cancellation/).
-- Session transcripts, traces, and recordings from LiveKit [Agent Observability](https://docs.livekit.io/testing/observability/).
-- [Simulations](https://docs.livekit.io/testing/simulations/) that test full conversations with your agent, run in CI on every merge to `main`.
-- A `Dockerfile` for [deploying to LiveKit Cloud](https://docs.livekit.io/deploy/agents/).
+## Table of Contents
 
-The starter works with any [custom web or mobile frontend](https://docs.livekit.io/frontends/) or with [telephony](https://docs.livekit.io/telephony/).
+- [Architecture Overview](#architecture-overview)
+- [Voice & AI Stack](#voice--ai-stack)
+- [Project Structure](#project-structure)
+- [Prerequisites](#prerequisites)
+- [Installation & Setup](#installation--setup)
+- [Agent Tools & Conversation Flow](#agent-tools--conversation-flow)
+- [Running & Testing the Agent](#running--testing-the-agent)
+- [Docker Deployment](#docker-deployment)
+- [Automated Testing & Linting](#automated-testing--linting)
 
-## Using coding agents
+---
 
-This project works with coding agents like [Claude Code](https://claude.com/product/claude-code), [Cursor](https://www.cursor.com/), and [Codex](https://openai.com/codex/).
+## Architecture Overview
 
-LiveKit offers both a CLI and an [MCP server](https://docs.livekit.io/reference/developer-tools/docs-mcp/) for browsing and searching its documentation. Search returns short excerpts, so fetch the full page to read the details:
-
-```console
-lk docs search "testing my agent"
-lk docs get-page /testing/unit-tests
+```text
+[ Patient (WebRTC / Phone / App) ]
+               │
+               ▼ (Real-time Audio Stream)
+[ LiveKit Cloud / RTC Server ]
+               │
+               ▼ (STT -> TurnDetector -> LLM -> TTS)
+[ Python Voice Agent (`src/agent.py`) ] ──(HTTP POST via aiohttp)──► [ Next.js LangGraph API Backend ]
+               │                                                                 │
+               ├──► Tool: get_available_doctors()                                ├──► Appwrite Database
+               └──► Tool: schedule_appointment()                                 └──► Pinecone Vector Store
 ```
 
-The project also includes an [`AGENTS.md`](AGENTS.md) file, so your coding agent follows LiveKit's best practices for workflows, handoffs, and testing, and tries its changes with the [agent debugger](https://docs.livekit.io/testing/debugger/).
+### Voice & AI Stack
 
-For more guidance at each stage of the work, from building and debugging to testing and deploying, install LiveKit's [agent skills](https://docs.livekit.io/intro/coding-agents/#agent-skills). The CLI installs them for the coding agents on your machine and adds the Docs MCP server to their config. `lk agent init` offers to do this when it creates your project, or you can run it yourself:
+| Layer                                | Technology                                                                                                   |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| **WebRTC Transport & Orchestration** | LiveKit Agents SDK (`AgentServer`, `AgentSession`)                                                           |
+| **Speech-to-Text (STT)**             | AssemblyAI (`assemblyai/universal-3-6-pro`)                                                                  |
+| **LLM Reasoning Engine**             | OpenAI (`openai/gpt-4o-mini`) with function calling                                                          |
+| **Text-to-Speech (TTS)**             | Fish Audio (`fishaudio/s2.1-pro`)                                                                            |
+| **Turn Detection**                   | LiveKit semantic + acoustic `TurnDetector` with adaptive interruption handling                               |
+| **Backend Bridge**                   | Asynchronous `aiohttp` client posting room-scoped sessions (`sessionId`) to the CarePulse LangGraph endpoint |
 
-```console
-lk skills install
+---
+
+## Project Structure
+
+```text
+voice-agent/
+├── src/
+│   ├── __init__.py
+│   └── agent.py            # LiveKit voice pipeline, environment router & function tools
+├── tests/
+│   └── test_agent.py       # Unit and integration tests
+├── .env.example            # Template for environment variables
+├── .env.local              # Local environment secrets (git-ignored)
+├── .dockerignore           # Docker build exclusions
+├── .gitignore              # Git exclusions
+├── Dockerfile              # Production container image definition
+├── livekit.toml            # LiveKit CLI & Cloud deployment config
+├── pyproject.toml          # Project metadata & dependencies
+├── scenarios.yaml          # LiveKit simulation & evaluation scenarios
+├── taskfile.yaml           # Task runner definitions
+├── uv.lock                 # Locked dependency tree (Astral uv)
+└── README.md               # Project documentation
 ```
 
-Run `lk skills update` to get the latest skills, and commit `skills-lock.json` along with them. See the [coding agents guide](https://docs.livekit.io/intro/coding-agents/) for more details.
+---
 
-## Dev setup
+## Prerequisites
 
-Install the [LiveKit CLI](https://docs.livekit.io/intro/basics/cli/), version 2.18.8 or later:
+- **Python 3.10+**
+- **[uv](https://docs.astral.sh/uv/)** (recommended) or standard `pip` / `venv`
+- **LiveKit Cloud** project (or self-hosted LiveKit server) credentials
+- **API Keys:** OpenAI, AssemblyAI, and Fish Audio (or LiveKit Inference credits)
+- **CarePulse Backend:** Running local Next.js server (`localhost:3000`) or deployed Vercel instance
 
-- **macOS:** `brew install livekit-cli`
-- **Linux:** `curl -sSL https://get.livekit.io/cli | bash`
-- **Windows:** `winget install LiveKit.LiveKitCLI`
+---
 
-Check your version with `lk --version`. To update an existing install, see [Update the CLI](https://docs.livekit.io/reference/developer-tools/livekit-cli/#updates).
+## Installation & Setup
 
-Then create a project from this template. The CLI clones the template and configures your environment:
+### 1. Clone the Repository
 
-```console
-lk cloud auth
-lk agent init my-agent --template agent-starter-python
+```powershell
+git clone https://github.com/narendravs/voice-agent.git
+cd voice-agent
 ```
 
-<details>
-<summary>Set up the project manually</summary>
+### 2. Install Dependencies
 
-Clone the repository and install dependencies into a virtual environment with [uv](https://docs.astral.sh/uv/):
+Using `uv` (recommended):
 
-```console
-git clone https://github.com/livekit-examples/agent-starter-python.git
-cd agent-starter-python
+```powershell
 uv sync
 ```
 
-Sign up for [LiveKit Cloud](https://cloud.livekit.io/), then copy `.env.example` to `.env.local` and fill it in. To have the CLI write your project's URL and API keys into the file instead, run:
+Or using standard Python `venv`:
 
-```console
-lk cloud auth
-lk app env --write --destination .env.local
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
 ```
 
-</details>
+### 3. Configure Environment Variables
 
-## Run the agent
+Create a `.env.local` file in the project root:
 
-The `lk agent console`, `lk agent dev`, and `lk agent debugger` commands run your agent on your own machine. To talk to it in your terminal:
-
-```console
-lk agent console
+```powershell
+copy .env.example .env.local
 ```
 
-To connect it to LiveKit Cloud so a frontend, a phone call, or the [Agent Console](https://docs.livekit.io/testing/agent-console/) can reach it:
+Add your configuration to `.env.local`:
 
-```console
+```env
+# LiveKit Credentials
+LIVEKIT_API_KEY="your_livekit_api_key"
+LIVEKIT_API_SECRET="your_livekit_api_secret"
+LIVEKIT_URL="wss://your-project.livekit.cloud"
+
+# AI & Inference Provider Keys
+OPENAI_API_KEY="your_openai_api_key"
+GROQ_API_KEY="your_groq_api_key"
+GOOGLE_API_KEY="your_google_api_key"
+
+# LangGraph Backend Endpoints
+NEXT_PUBLIC_PROD_LANGGRAPH_AGENT_ENDPOINT="https://your-app.vercel.app/api/aiagents/voiceAgent"
+NEXT_PUBLIC_LOCAL_LANGGRAPH_AGENT_ENDPOINT="http://localhost:3000/api/aiagents/voiceAgent"
+
+# Environment Switch: "local" or "production"
+NEXT_PUBLIC_LANGGRAPH_ENV="local"
+
+# Vercel Deployment Protection Bypass (if enabled on preview/prod)
+VERCEL_PROTECTION_BYPASS_SECRET="your_vercel_bypass_secret"
+```
+
+---
+
+## Agent Tools & Conversation Flow
+
+The voice assistant (`Assistant` in `src/agent.py`) enforces strict guardrails to prevent hallucinated doctor names or premature bookings.
+
+### 1. `get_available_doctors()`
+
+- Triggered immediately whenever a caller asks which doctors are available, or mentions a doctor's name before verification.
+- Queries the backend database to retrieve real doctor names and specialties.
+
+### 2. `schedule_appointment(patient_name, doctor_name, appointment_time, reason, additional_info)`
+
+- Collects four required details sequentially (one question at a time):
+  1. Patient's full name
+  2. Verified doctor name
+  3. Preferred date and time (converted to `YYYY-MM-DD HH:MM` 24-hour format)
+  4. Reason for visit / symptoms
+- Submits the booking payload to the LangGraph API and relays confirmation or follow-up requests (such as phone/email) back to the caller.
+
+---
+
+## Running & Testing the Agent
+
+### Local Development Mode
+
+Connects to LiveKit Cloud and listens for incoming room dispatches (`agent_name="voice-agent"`):
+
+```bash
 lk agent dev
 ```
 
-To let a coding agent or a script test it one text turn at a time, use the [agent debugger](https://docs.livekit.io/testing/debugger/). Each turn prints the agent's reply along with the tool calls and handoffs behind it:
+Alternatively, run the agent directly:
 
-```console
-lk agent debugger start
-lk agent debugger say "Hi, what can you do?"
-lk agent debugger stop
+```bash
+uv run python src/agent.py dev
 ```
 
-In production, run the agent directly:
+**How to test development sessions:**
 
-```console
-uv run src/agent.py start
+1. Start the local development agent using the command above.
+2. Open the LiveKit **Development Agent Console**.
+3. Click **Start Session** to test live two-way audio with your local worker.
+
+### Production Worker Mode
+
+Create and deploy the worker to LiveKit Cloud using the LiveKit CLI:
+
+```bash
+lk agent create
+lk agent deploy
 ```
 
-## Frontends and telephony
+**How to test production sessions:**
 
-Pair the agent with a prebuilt frontend starter, or add telephony:
+1. Ensure your production deployment is active on LiveKit Cloud.
+2. Open the LiveKit **Production Agent Console**.
+3. Click **Start Session** to initiate a test call with the deployed production agent.
 
-| Platform | Link | Description |
-|----------|----------|-------------|
-| **Web** | [`livekit-examples/agent-starter-react`](https://github.com/livekit-examples/agent-starter-react) | Web voice AI assistant with React & Next.js |
-| **iOS/macOS** | [`livekit-examples/agent-starter-swift`](https://github.com/livekit-examples/agent-starter-swift) | Native iOS, macOS, and visionOS voice AI assistant |
-| **Flutter** | [`livekit-examples/agent-starter-flutter`](https://github.com/livekit-examples/agent-starter-flutter) | Cross-platform voice AI assistant app |
-| **React Native** | [`livekit-examples/voice-assistant-react-native`](https://github.com/livekit-examples/voice-assistant-react-native) | Native mobile app with React Native & Expo |
-| **Android** | [`livekit-examples/agent-starter-android`](https://github.com/livekit-examples/agent-starter-android) | Native Android app with Kotlin & Jetpack Compose |
-| **Web Embed** | [`livekit-examples/agent-starter-embed`](https://github.com/livekit-examples/agent-starter-embed) | Voice AI widget for any website |
-| **Telephony** | [Documentation](https://docs.livekit.io/telephony/) | Add inbound or outbound calling to your agent |
+---
 
-For more options, see the [frontend guide](https://docs.livekit.io/frontends/).
+## Docker Deployment
 
-## Testing and debugging
+Build and run the containerized worker for custom cloud hosting (Render, AWS ECS, or Google Cloud Run):
 
-Simulations run full multi-turn conversations between a simulated user and your agent on LiveKit Cloud, then judge each transcript. The scenarios live in [`scenarios.yaml`](scenarios.yaml). Run them locally with the CLI:
+```bash
+# Build image
+docker build -t carepulse-voice-agent .
 
-```console
-lk agent simulate text --scenarios scenarios.yaml
+# Run container with local environment file
+docker run --env-file .env.local carepulse-voice-agent
 ```
 
-The `Simulations` workflow in [`.github/workflows/simulations.yml`](.github/workflows/simulations.yml) runs the same file on every merge to `main`, and on demand from the Actions tab. It doesn't run on every pull request push because each run uses real inference. See the [simulations guide](https://docs.livekit.io/testing/simulations/) for how to write scenarios and read results.
+---
 
-To check a change turn by turn without a live session, use the [agent debugger](https://docs.livekit.io/testing/debugger/) shown in [Run the agent](#run-the-agent).
+## Automated Testing & Linting
 
-To debug a running agent, open it in the [Agent Console](https://docs.livekit.io/testing/agent-console/). It shows events, tool calls, and model timing as you talk to the agent. To stream logs from a deployed agent, run `lk agent logs`.
+Run automated tests and code quality checks:
 
-## Using this template for your own project
+```bash
+# Run pytest suite
+uv run pytest tests/
 
-After you create your own project from this template:
-
-- **Commit `uv.lock`.** The template doesn't track it, but your project should, for reproducible builds. If you deploy to LiveKit Cloud, commit `livekit.toml` too.
-- **Add repository secrets.** Add `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` as [repository secrets](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-what-your-workflow-does/using-secrets-in-github-actions) so the simulations can run in CI.
-
-## Deploying to production
-
-To deploy the agent to LiveKit Cloud or another environment with the included `Dockerfile`, see the [deployment guide](https://docs.livekit.io/deploy/agents/).
-
-## Self-hosted LiveKit
-
-You can self-host LiveKit instead of using LiveKit Cloud. See the [self-hosting guide](https://docs.livekit.io/transport/self-hosting/local/). If you self-host, use [model plugins](https://docs.livekit.io/agents/models/#plugins) instead of LiveKit Inference, and remove the [LiveKit Cloud noise cancellation](https://docs.livekit.io/transport/media/noise-cancellation/) plugin.
-
-## License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+# Run Ruff linter
+uv run ruff check .
+```
